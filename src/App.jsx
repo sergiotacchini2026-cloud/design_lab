@@ -266,19 +266,38 @@ ${JSON.stringify(step2Json.redesign, null, 2)}
 - 프롬프트에 "front view and back view side by side, both ghost mannequin shots" 같은 문구를 포함시키세요.
 - 두 뷰 모두 동일한 흰 배경, 동일한 조명 조건, 동일한 의류로 명확히 표현되어야 합니다.
 
-[가이드 3] 타 브랜드 로고/표식 절대 금지 (매우 중요)
-- 원본 의류에 다른 브랜드 로고(Nike, Adidas, ASICS, Lacoste, Puma, Under Armour 등)가 있더라도, 결과물에는 절대 포함하지 마세요.
-- 원본 분석 결과(details, 패턴 등)에 타 브랜드명이 언급되어 있어도 무시하고, 그 자리는 무지(no logo) 또는 Sergio Tacchini 로고로 처리하세요.
-- 프롬프트에 다음 문구를 반드시 포함시키세요: "no other brand logos or trademarks visible, plain unbranded fabric in logo areas, Sergio Tacchini brand identity only"
-- 어떤 경우에도 프롬프트에 타 브랜드명을 직접 언급하지 마세요.
+[가이드 3] 타 브랜드 로고 차단 + Sergio Tacchini 로고 반영 (매우 중요)
+- 원본 의류의 타 브랜드 로고(Nike, Adidas, ASICS, Lacoste, Puma, Under Armour 등)는 결과물에 절대 포함 금지.
+- 원본 분석 결과에 타 브랜드명이 있어도 무시하고, 그 자리에 Sergio Tacchini 로고를 배치하거나 무지(plain)로 처리.
+- 프롬프트에 다음 두 가지 중 의류 카테고리에 적합한 것을 선택해 명시:
+  (A) 심볼만 사용 (작은 사이즈에 적합, 가슴/소매/뒤 라벨):
+      "Sergio Tacchini monogram emblem (interlocking S and T letters in oval form, S on top, T below, classic black line art) embroidered on [위치 - 보통 좌측 가슴 또는 후면 목 아래]"
+  (B) 로고타입 사용 (더 크게 노출 가능한 위치):
+      "Sergio Tacchini wordmark (bold sans-serif typography spelling 'Sergio Tacchini' in solid black) printed on [위치]"
+- 둘 다 사용해도 됨. 단, Active 라인은 미니멀하게 심볼만, Classic 라인은 로고타입 강조 등 라인 톤에 맞게.
+- 절대 금지: 프롬프트에 ASICS/Nike 등 타 브랜드명 직접 언급.
+- 반드시 포함: "no other brand logos or trademarks visible, only Sergio Tacchini branding"
+
+[가이드 4] 진짜 고스트샷 - 마네킹/인체 절대 금지 (매우 중요)
+- 결과물에는 마네킹, 인체, 모델, 더미, 신체 부위(손/머리/다리/목 등)가 절대 보이면 안 됩니다.
+- 의류만 공중에 떠 있는 형태(invisible mannequin / floating garment)여야 합니다.
+- 프롬프트에 다음 강조 문구를 반드시 포함:
+  "invisible ghost mannequin effect, garment floating in mid-air with no visible mannequin or human body, no model, no dummy, no body parts, only the clothing item suspended in space, professional e-commerce product photography style"
+- 의류 내부는 자연스러운 입체감(volume)을 가지되, 인체 형상은 절대 보이지 않아야 함.
+
+[가이드 5] 결과 이미지에 텍스트/주석 금지
+- 생성된 이미지 안에 어떤 글자도 들어가면 안 됩니다.
+- "front", "back", "12-16 counts", 사이즈 표시, 카운트 정보, 캡션, 워터마크, 숫자, 라벨 텍스트 등 모두 금지.
+- (단, Sergio Tacchini 로고타입에 들어있는 "Sergio Tacchini" 글자는 의류에 인쇄된 디자인 요소로서 허용)
+- 프롬프트에 반드시 포함: "no text annotations, no labels, no captions, no watermarks, no numbers, no count notations on or around the image, clean product shot only"
 
 ================================================
 
-위 가이드를 모두 반영하여, 두 가지 모델용 영문 프롬프트를 만들어주세요. JSON으로만 응답. 코드 블록(\`\`\`) 없이.
+위 가이드 1~5를 모두 반영하여, 두 가지 모델용 영문 프롬프트를 만들어주세요. JSON으로만 응답. 코드 블록(\`\`\`) 없이.
 
-1) "nanoBanana": Nano Banana (Gemini 2.5 Flash Image)용. "3D ghost mannequin product shot showing both front view and back view side by side of a [garment]..." 형식으로 시작. 자연어 풍부한 묘사. 80-120 단어. 흰 배경, 부드러운 스튜디오 조명, 의류만 공중에 떠있는 형태, 원본 보존 요소 명시, 앞뒤 뷰 명시.
+1) "nanoBanana": Nano Banana (Gemini 2.5 Flash Image)용. "Invisible ghost mannequin product shot showing both front view and back view side by side of a [garment]..." 형식으로 시작. 자연어 풍부한 묘사. 100-140 단어. 흰 배경, 부드러운 스튜디오 조명, 마네킹/인체 없음 강조, 앞뒤 뷰, Sergio Tacchini 로고 위치/형태 명시, 텍스트/주석 금지 명시.
 
-2) "imagen3": Imagen 4용. 키워드 콤마 연결형. 50-70 단어. "front view back view, ghost mannequin, dual view" 등의 핵심 키워드 포함.
+2) "imagen3": Imagen 4용. 키워드 콤마 연결형. 60-80 단어. 핵심 키워드: "invisible ghost mannequin, no human body, floating garment, front and back view, Sergio Tacchini monogram/wordmark, no text overlay, plain white background, e-commerce product shot".
 
 {
   "nanoBanana": "...",
@@ -976,7 +995,7 @@ function HarnessPromptingButton() {
             position: 'absolute',
             top: 'calc(100% + 8px)',
             right: 0,
-            width: 360,
+            width: 400,
             padding: '14px 16px',
             background: '#1a1a1a',
             color: '#fff',
@@ -1002,10 +1021,22 @@ function HarnessPromptingButton() {
               한 이미지 안에 정면(front view)과 후면(back view)을 나란히 배치. 동일한 배경/조명 조건.
             </div>
           </div>
-          <div>
-            <div style={{ fontWeight: 500, marginBottom: 3, color: '#fff' }}>3. 타 브랜드 로고 차단</div>
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontWeight: 500, marginBottom: 3, color: '#fff' }}>3. Sergio Tacchini 로고 반영</div>
             <div style={{ color: '#ccc', fontSize: 11.5 }}>
-              원본의 타사 로고(Nike, ASICS 등)는 결과물에서 제거. 무지 또는 Sergio Tacchini 로고로 대체.
+              타사 로고(Nike, ASICS 등) 제거. 그 자리에 Sergio Tacchini 모노그램 심볼 또는 워드마크 배치.
+            </div>
+          </div>
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontWeight: 500, marginBottom: 3, color: '#fff' }}>4. 진짜 고스트샷</div>
+            <div style={{ color: '#ccc', fontSize: 11.5 }}>
+              마네킹/인체/모델 절대 금지. 의류만 공중에 떠있는 invisible ghost mannequin 효과.
+            </div>
+          </div>
+          <div>
+            <div style={{ fontWeight: 500, marginBottom: 3, color: '#fff' }}>5. 텍스트/주석 금지</div>
+            <div style={{ color: '#ccc', fontSize: 11.5 }}>
+              결과 이미지 안에 글자/숫자/캡션/워터마크 표시 금지. 깨끗한 제품 컷만.
             </div>
           </div>
           {/* Tooltip arrow */}
