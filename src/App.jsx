@@ -180,13 +180,18 @@ export default function ClothingDesignGenerator() {
             { type: "image", source: { type: "base64", media_type: item.mediaType, data: item.base64 } },
             { type: "text", text: `당신은 의류 디자인 전문가입니다. 이 의류 이미지를 분석해서 다음 항목을 한국어 JSON으로만 응답하세요. 다른 설명 없이 JSON만 출력. 코드 블록(\`\`\`)도 사용하지 마세요.
 
+[중요 규칙]
+- 의류에 보이는 타 브랜드명(Nike, Adidas, ASICS, Lacoste, Puma, Under Armour 등)은 절대 언급하지 마세요.
+- 브랜드 로고가 보이면 위치만 묘사하되(예: "좌측 가슴에 작은 엠블럼 위치"), 브랜드명은 적지 마세요.
+- 디자인 형태/구조 분석에 집중하세요.
+
 {
   "category": "카테고리 (예: 폴로, 셋업, 스커트, 자켓 등)",
   "style": "전반적 스타일 한 줄 묘사",
   "silhouette": "실루엣 (슬림/릴렉스/오버 등 핏 묘사)",
   "material": "소재 추정 및 요철감 묘사",
   "sewing": "봉재 특징 (스티치, 마감 등)",
-  "details": "디테일 요소 (버튼, 카라, 패턴, 로고 위치 등)",
+  "details": "디테일 요소 (버튼, 카라, 패턴, 로고 위치 등 - 단, 브랜드명은 언급 금지)",
   "color": "주요 컬러"
 }` }
           ]
@@ -260,6 +265,12 @@ ${JSON.stringify(step2Json.redesign, null, 2)}
 - 의류의 **정면(front view)과 후면(back view)을 한 이미지 안에 나란히** 배치하도록 명시하세요.
 - 프롬프트에 "front view and back view side by side, both ghost mannequin shots" 같은 문구를 포함시키세요.
 - 두 뷰 모두 동일한 흰 배경, 동일한 조명 조건, 동일한 의류로 명확히 표현되어야 합니다.
+
+[가이드 3] 타 브랜드 로고/표식 절대 금지 (매우 중요)
+- 원본 의류에 다른 브랜드 로고(Nike, Adidas, ASICS, Lacoste, Puma, Under Armour 등)가 있더라도, 결과물에는 절대 포함하지 마세요.
+- 원본 분석 결과(details, 패턴 등)에 타 브랜드명이 언급되어 있어도 무시하고, 그 자리는 무지(no logo) 또는 Sergio Tacchini 로고로 처리하세요.
+- 프롬프트에 다음 문구를 반드시 포함시키세요: "no other brand logos or trademarks visible, plain unbranded fabric in logo areas, Sergio Tacchini brand identity only"
+- 어떤 경우에도 프롬프트에 타 브랜드명을 직접 언급하지 마세요.
 
 ================================================
 
@@ -985,10 +996,16 @@ function HarnessPromptingButton() {
               원본 디자인의 핵심 요소를 30~50% 유지. 카테고리, 기본 형태, 주요 디테일 일부는 살려서 브랜드 톤으로 재해석.
             </div>
           </div>
-          <div>
+          <div style={{ marginBottom: 10 }}>
             <div style={{ fontWeight: 500, marginBottom: 3, color: '#fff' }}>2. 정면 앞/뒤 뷰</div>
             <div style={{ color: '#ccc', fontSize: 11.5 }}>
               한 이미지 안에 정면(front view)과 후면(back view)을 나란히 배치. 동일한 배경/조명 조건.
+            </div>
+          </div>
+          <div>
+            <div style={{ fontWeight: 500, marginBottom: 3, color: '#fff' }}>3. 타 브랜드 로고 차단</div>
+            <div style={{ color: '#ccc', fontSize: 11.5 }}>
+              원본의 타사 로고(Nike, ASICS 등)는 결과물에서 제거. 무지 또는 Sergio Tacchini 로고로 대체.
             </div>
           </div>
           {/* Tooltip arrow */}
