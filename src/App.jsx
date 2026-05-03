@@ -284,13 +284,21 @@ ${JSON.stringify(step2Json.redesign, null, 2)}
 - "front", "back", "12-16 counts", 사이즈 표시, 카운트 정보, 캡션, 워터마크, 숫자, 라벨 텍스트, 브랜드명 글자 등 모두 금지.
 - 프롬프트에 반드시 포함: "no text annotations, no labels, no captions, no watermarks, no numbers, no count notations, no typography on the garment, completely text-free clean product shot"
 
+[가이드 6] 완전한 순수 흰 배경 강제 (매우 중요)
+- 결과 이미지의 배경은 **완전한 순백색(#FFFFFF, pure white)**이어야 합니다.
+- 원본 이미지에 어떤 배경(흙바닥, 잔디, 테니스장, 그라데이션, 그림자, 텍스처, 환경 등)이 있더라도 결과물에는 절대 반영하지 마세요.
+- 배경에 색상 변화, 그라데이션, 환경 요소, 바닥, 벽, 표면 텍스처가 일체 보이면 안 됩니다.
+- 의류 바로 아래의 부드러운 그림자(soft shadow)는 허용되지만, 그 외 모든 배경 요소는 순백.
+- 프롬프트의 첫 부분과 끝 부분 양쪽에 다음을 강조해서 포함:
+  "isolated on completely pure solid white background (#FFFFFF), no environment, no floor, no surface texture, no gradient, no ambient color, studio cyclorama style seamless white backdrop, e-commerce isolated product cutout style"
+
 ================================================
 
-위 가이드 1~5를 모두 반영하여, 두 가지 모델용 영문 프롬프트를 만들어주세요. JSON으로만 응답. 코드 블록(\`\`\`) 없이.
+위 가이드 1~6을 모두 반영하여, 두 가지 모델용 영문 프롬프트를 만들어주세요. JSON으로만 응답. 코드 블록(\`\`\`) 없이.
 
-1) "nanoBanana": Nano Banana (Gemini 2.5 Flash Image)용. "Invisible ghost mannequin product shot showing both front view and back view side by side of a [garment]..." 형식으로 시작. 자연어 풍부한 묘사. 100-140 단어. 흰 배경, 부드러운 스튜디오 조명, 마네킹/인체 없음 강조, 앞뒤 뷰, 모든 로고/브랜드 표식 제거 명시, 텍스트/주석 금지 명시.
+1) "nanoBanana": Nano Banana (Gemini 2.5 Flash Image)용. "Invisible ghost mannequin product shot on pure solid white background showing both front view and back view side by side of a [garment]..." 형식으로 시작. 자연어 풍부한 묘사. 100-140 단어. 반드시 명시: 완전한 순백 배경 (pure #FFFFFF white background), 마네킹/인체 없음, 앞뒤 뷰, 모든 로고/브랜드 표식 제거, 텍스트/주석 금지, 환경/바닥/그라데이션 없음.
 
-2) "imagen3": Imagen 4용. 키워드 콤마 연결형. 60-80 단어. 핵심 키워드: "invisible ghost mannequin, no human body, floating garment, front and back view, no logos, no branding, unbranded plain fabric, no text overlay, plain white background, e-commerce product shot".
+2) "imagen3": Imagen 4용. 키워드 콤마 연결형. 60-80 단어. 핵심 키워드 (반드시 포함): "isolated on pure white background, #FFFFFF solid white backdrop, no environment, no floor, invisible ghost mannequin, no human body, floating garment, front and back view, no logos, no branding, unbranded plain fabric, no text, e-commerce product cutout".
 
 {
   "nanoBanana": "...",
@@ -988,7 +996,7 @@ function HarnessPromptingButton() {
             position: 'absolute',
             top: 'calc(100% + 8px)',
             right: 0,
-            width: 400,
+            width: 360,
             padding: '14px 16px',
             background: '#1a1a1a',
             color: '#fff',
@@ -1014,22 +1022,10 @@ function HarnessPromptingButton() {
               한 이미지 안에 정면(front view)과 후면(back view)을 나란히 배치. 동일한 배경/조명 조건.
             </div>
           </div>
-          <div style={{ marginBottom: 10 }}>
+          <div>
             <div style={{ fontWeight: 500, marginBottom: 3, color: '#fff' }}>3. 모든 로고 제거</div>
             <div style={{ color: '#ccc', fontSize: 11.5 }}>
               타사 로고(Nike, ASICS 등) 및 Sergio Tacchini 로고 모두 제거. 무지(plain) 원단 상태로 생성.
-            </div>
-          </div>
-          <div style={{ marginBottom: 10 }}>
-            <div style={{ fontWeight: 500, marginBottom: 3, color: '#fff' }}>4. 진짜 고스트샷</div>
-            <div style={{ color: '#ccc', fontSize: 11.5 }}>
-              마네킹/인체/모델 절대 금지. 의류만 공중에 떠있는 invisible ghost mannequin 효과.
-            </div>
-          </div>
-          <div>
-            <div style={{ fontWeight: 500, marginBottom: 3, color: '#fff' }}>5. 텍스트/주석 금지</div>
-            <div style={{ color: '#ccc', fontSize: 11.5 }}>
-              결과 이미지 안에 글자/숫자/캡션/워터마크 표시 금지. 깨끗한 제품 컷만.
             </div>
           </div>
           {/* Tooltip arrow */}
