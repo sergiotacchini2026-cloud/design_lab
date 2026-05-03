@@ -75,41 +75,135 @@ function loadHistory() {
   }
 }
 
-function saveToHistory(item) {
+// 이미지를 100KB 미만으로 압축 (data URL → data URL)
+// - 최대 너비 600px로 리사이즈
+// - JPEG 품질 0.7부터 시작해서 100KB 넘으면 점진적으로 낮춤
+async function compressImageDataUrl(dataUrl, targetSizeKB = 100, maxWidth = 600) {
+  if (!dataUrl || !dataUrl.startsWith('data:')) return dataUrl;
+
   try {
-    const history = loadHistory();
-    // 같은 id가 있으면 업데이트, 없으면 추가
-    const idx = history.findIndex(h => h.id === item.id);
-    // 저장용으로 큰 데이터 정리 (file 객체는 제외, previewUrl은 base64로 변환되어 있어야 함)
-    const sanitized = {
-      id: item.id,
-      name: item.name,
-      mediaType: item.mediaType,
-      base64: item.base64,
-      step1: item.step1,
-      step2: item.step2,
-      step3: item.step3,
-      generatedImages: item.generatedImages || {},
-      savedAt: Date.now(),
-    };
-    if (idx >= 0) {
-      history[idx] = sanitized;
-    } else {
-      history.unshift(sanitized);
+    const img = await new Promise((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = reject;
+      i.src = dataUrl;
+    });
+
+    // 비율 유지하며 리사이즈
+    const ratio = Math.min(maxWidth / img.width, 1);
+    const w = Math.round(img.width * ratio);
+    const h = Math.round(img.height * ratio);
+
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    // 흰 배경 깔기 (PNG 투명 영역이 검정으로 변하지 않도록)
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0, w, h);
+
+    // 품질 단계별로 시도해서 목표 크기 이하로 만들기
+    const qualities = [0.7, 0.6, 0.5, 0.4, 0.3];
+    for (const q of qualities) {
+      const compressed = canvas.toDataURL('image/jpeg', q);
+      // base64 → 대략적인 바이트 크기 (base64는 원본의 약 4/3 크기)
+      const sizeKB = (compressed.length * 0.75) / 1024;
+      if (sizeKB <= targetSizeKB) {
+        console.log(`[Compress] ${img.width}x${img.height} → ${w}x${h}, q=${q}, ${sizeKB.toFixed(1)}KB`);
+        return compressed;
+      }
     }
-    // 최대 50개까지만 보관 (용량 관리)
-    const trimmed = history.slice(0, 50);
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(trimmed));
+    // 다 시도해도 100KB 안 되면 가장 낮은 품질로
+    const lowest = canvas.toDataURL('image/jpeg', 0.3);
+    console.warn(`[Compress] 목표 크기 못 맞춤, 최저 품질로 저장: ${(lowest.length * 0.75 / 1024).toFixed(1)}KB`);
+    return lowest;
   } catch (e) {
-    console.error('History 저장 실패:', e);
-    // localStorage 용량 초과 시 가장 오래된 항목 삭제하고 재시도
-    if (e.name === 'QuotaExceededError') {
-      try {
-        const history = loadHistory();
-        const trimmed = history.slice(0, 20);
-        localStorage.setItem(HISTORY_KEY, JSON.stringify(trimmed));
-      } catch {}
+    console.error('[Compress] 이미지 압축 실패:', e);
+    return dataUrl; // 실패 시 원본 반환
+  }
+}
+
+async function saveToHistory(item) {
+  // 원본 의류 이미지(base64)도 압축 → 화면 표시는 원본 file 사용하니 영향 없음
+  const compressedBase64 = item.base64
+    ? await compressImageDataUrl(`data:${item.mediaType};base64,${item.base64}`, 80, 400)
+        .then(url => url.split(',')[1])
+    : item.base64;
+
+  // 생성된 이미지들도 각각 압축
+  const compressedImages = {};
+  if (item.generatedImages) {
+    for (const [key, dataUrl] of Object.entries(item.generatedImages)) {
+      if (dataUrl) {
+        compressedImages[key] = await compressImageDataUrl(dataUrl, 100, 600);
+      }
     }
+  }
+
+  const sanitized = {
+    id: item.id,
+    name: item.name,
+    mediaType: 'image/jpeg', // 압축 후 JPEG로 통일
+    base64: compressedBase64,
+    step1: item.step1,
+    step2: item.step2,
+    step3: item.step3,
+    generatedImages: compressedImages,
+    savedAt: Date.now(),
+  };
+
+  console.log('[History] 저장 시도:', {
+    id: sanitized.id,
+    name: sanitized.name,
+    hasGeneratedImages: Object.keys(sanitized.generatedImages),
+    estimatedSizeKB: (JSON.stringify(sanitized).length / 1024).toFixed(1),
+  });
+
+  // 한 번 시도 → 실패 시 정리 후 재시도 → 그래도 실패 시 이미지 빼고 저장
+  const tryWrite = (history) => {
+    try {
+      const idx = history.findIndex(h => h.id === sanitized.id);
+      if (idx >= 0) {
+        history[idx] = sanitized;
+      } else {
+        history.unshift(sanitized);
+      }
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+      console.log('[History] 저장 성공:', sanitized.id, '/ 총', history.length, '개');
+      return true;
+    } catch (e) {
+      console.error('[History] 저장 실패:', e.name, e.message);
+      return false;
+    }
+  };
+
+  // 1차 시도
+  let history = loadHistory();
+  if (tryWrite(history)) return;
+
+  // 2차: 용량 부족 → 오래된 것부터 삭제하며 재시도
+  console.warn('[History] 용량 부족, 오래된 항목 삭제 후 재시도');
+  while (history.length > 1) {
+    history = history.slice(0, history.length - 1);
+    if (tryWrite(history)) return;
+  }
+
+  // 3차: 그래도 실패 → 현재 항목의 이미지 데이터 빼고 저장 (메타데이터만)
+  console.warn('[History] 이미지 데이터 제거 후 저장 시도');
+  const liteSanitized = {
+    ...sanitized,
+    generatedImages: {},
+    _imagesDropped: true,
+  };
+  try {
+    const idx = history.findIndex(h => h.id === liteSanitized.id);
+    if (idx >= 0) history[idx] = liteSanitized;
+    else history.unshift(liteSanitized);
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+    console.warn('[History] 메타데이터만 저장 (이미지 제외)');
+  } catch (finalErr) {
+    console.error('[History] 최종 저장 실패:', finalErr);
   }
 }
 
@@ -559,12 +653,22 @@ function HistoryView({ historyItems, onSelect, onDelete }) {
     );
   }
 
+  const droppedCount = historyItems.filter(it => it._imagesDropped).length;
+
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: '1.5rem' }}>
         <h2 style={{ fontFamily: "'DM Serif Display', Georgia, serif", fontSize: 24, fontWeight: 400, letterSpacing: -0.3 }}>History</h2>
         <span style={{ fontSize: 12, color: '#888' }}>총 {historyItems.length}개 · 최신순</span>
       </div>
+
+      {droppedCount > 0 && (
+        <div style={{ padding: '12px 16px', background: '#FFF7E6', border: '1px solid #F4D77E', borderRadius: 8, marginBottom: '1rem', fontSize: 12, color: '#7A5A0A', lineHeight: 1.6 }}>
+          <strong>⚠️ 저장 공간 부족 안내</strong> · {droppedCount}개의 작업에서 이미지가 저장되지 않았습니다.
+          브라우저 localStorage 한계(약 5~10MB)를 초과해 메타데이터만 보관됩니다.
+          오래된 항목을 삭제하면 새 작업의 이미지가 저장됩니다.
+        </div>
+      )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {historyItems.map(item => (
@@ -615,8 +719,8 @@ function HistoryCard({ item, onSelect, onDelete }) {
 
       {/* 결과 이미지 2개 */}
       <div style={{ display: 'flex', gap: 10, flexShrink: 0 }}>
-        <ResultThumb label="Nano Banana" src={nanoBananaImg} accent="#FAEEDA" textColor="#854F0B" />
-        <ResultThumb label="Imagen 3" src={imagen3Img} accent="#E6F1FB" textColor="#0C447C" />
+        <ResultThumb label="Nano Banana" src={nanoBananaImg} accent="#FAEEDA" textColor="#854F0B" imagesDropped={item._imagesDropped} />
+        <ResultThumb label="Imagen 3" src={imagen3Img} accent="#E6F1FB" textColor="#0C447C" imagesDropped={item._imagesDropped} />
       </div>
 
       {/* 정보 */}
@@ -645,7 +749,7 @@ function HistoryCard({ item, onSelect, onDelete }) {
   );
 }
 
-function ResultThumb({ label, src, accent, textColor }) {
+function ResultThumb({ label, src, accent, textColor, imagesDropped }) {
   return (
     <div>
       <div style={{ fontSize: 9, color: textColor, letterSpacing: 0.8, marginBottom: 4, fontWeight: 500 }}>{label}</div>
@@ -658,6 +762,8 @@ function ResultThumb({ label, src, accent, textColor }) {
       }}>
         {src ? (
           <img src={src} alt={label} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+        ) : imagesDropped ? (
+          <span style={{ fontSize: 8, color: textColor, opacity: 0.7, textAlign: 'center', padding: '0 4px', lineHeight: 1.3 }} title="브라우저 저장 공간 부족으로 이미지 데이터가 저장되지 않았습니다">저장공간{'\n'}부족</span>
         ) : (
           <span style={{ fontSize: 9, color: textColor, opacity: 0.6, textAlign: 'center', padding: '0 4px', lineHeight: 1.3 }}>미생성</span>
         )}
