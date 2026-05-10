@@ -6,7 +6,8 @@ import { Upload, Image as ImageIcon, X, Copy, Check, Loader2, Sparkles, ChevronR
 // - 프로덕션: 같은 도메인의 /api 사용
 const API_BASE = '/api';
 
-const BRAND_GUIDE = `
+// 기본 브랜드 가이드 (사용자가 파일 업로드하기 전까지 적용)
+const DEFAULT_BRAND_GUIDE = `
 Sergio Tacchini Brand DNA Guide
 
 [Core Concept: Court-side Elegance]
@@ -48,6 +49,97 @@ CLASSIC 라인 (클래식)
 - Skirt: 안정적인 기장감, 넓은 플리츠 간격으로 정적인 상태에서도 기품 있는 드레이프
 `;
 
+const BRAND_GUIDE_KEY = 'sergio_tacchini_brand_guide';
+
+// 현재 적용 중인 브랜드 가이드 (localStorage 우선, 없으면 기본값)
+function loadBrandGuide() {
+  try {
+    const raw = localStorage.getItem(BRAND_GUIDE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed?.content) return parsed;
+    }
+  } catch (e) {
+    console.error('브랜드 가이드 로드 실패:', e);
+  }
+  return {
+    fileName: 'Sergio Tacchini Brand DNA Guide (기본)',
+    content: DEFAULT_BRAND_GUIDE,
+    uploadedAt: null,
+    isDefault: true,
+  };
+}
+
+function saveBrandGuide(fileName, content) {
+  try {
+    const data = {
+      fileName,
+      content,
+      uploadedAt: Date.now(),
+      isDefault: false,
+    };
+    localStorage.setItem(BRAND_GUIDE_KEY, JSON.stringify(data));
+    return data;
+  } catch (e) {
+    console.error('브랜드 가이드 저장 실패:', e);
+    throw e;
+  }
+}
+
+function resetBrandGuide() {
+  try {
+    localStorage.removeItem(BRAND_GUIDE_KEY);
+  } catch (e) {
+    console.error('브랜드 가이드 리셋 실패:', e);
+  }
+}
+
+// PDF에서 텍스트 추출
+async function extractTextFromPdf(file) {
+  // PDF.js 동적 import (초기 로딩 시간 단축)
+  const pdfjsLib = await import('pdfjs-dist');
+  // worker 설정 (CDN에서 로드)
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+
+  let fullText = '';
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    const pageText = content.items.map(item => item.str).join(' ');
+    fullText += pageText + '\n\n';
+  }
+  return fullText.trim();
+}
+
+// Word(.docx)에서 텍스트 추출
+async function extractTextFromDocx(file) {
+  const mammoth = await import('mammoth');
+  const arrayBuffer = await file.arrayBuffer();
+  const result = await mammoth.extractRawText({ arrayBuffer });
+  return result.value.trim();
+}
+
+// 파일 종류 판별 후 텍스트 추출
+async function extractTextFromFile(file) {
+  const name = file.name.toLowerCase();
+  if (name.endsWith('.pdf') || file.type === 'application/pdf') {
+    return await extractTextFromPdf(file);
+  } else if (
+    name.endsWith('.docx') ||
+    file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  ) {
+    return await extractTextFromDocx(file);
+  } else if (name.endsWith('.doc')) {
+    throw new Error('구버전 .doc 파일은 지원하지 않습니다. .docx로 저장 후 다시 시도해주세요.');
+  } else {
+    throw new Error('PDF 또는 Word(.docx) 파일만 지원합니다.');
+  }
+}
+
 // Claude API 호출 헬퍼 (백엔드 프록시 경유)
 async function callClaude(body) {
   const response = await fetch(`${API_BASE}/claude`, {
@@ -57,7 +149,30 @@ async function callClaude(body) {
   });
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
-    throw new Error(err.error?.message || err.error || `Claude API 오류 (${response.status})`);
+    const rawMessage = err.error?.message || err.error || '';
+
+    // 상태별 친절한 메시지
+    if (response.status === 413) {
+      throw new Error(
+        '📦 요청 크기 초과 (413)\n\n[원인]\n업로드한 이미지가 너무 커서 서버 한계(Vercel 4.5MB)를 초과했습니다.\n\n[조치 방법]\n1) 이미지를 축소해서 다시 업로드 (1500px 이하 권장)\n2) JPEG 포맷으로 저장하면 용량이 작아집니다\n3) 같은 문제 반복 시 새로고침 후 다른 이미지로 시도'
+      );
+    }
+    if (response.status === 401 || response.status === 403) {
+      throw new Error(
+        `🔑 인증 실패 (${response.status})\n\n[원인]\nClaude API 키가 유효하지 않거나 권한이 없습니다.\n\n[조치 방법]\n관리자에게 문의해주세요. (Vercel 환경변수 ANTHROPIC_API_KEY 확인 필요)`
+      );
+    }
+    if (response.status === 429 || rawMessage.includes('credit') || rawMessage.includes('balance')) {
+      throw new Error(
+        `🚫 사용 한도 초과 또는 잔액 부족\n\n[원인]\n${rawMessage}\n\n[조치 방법]\n관리자에게 문의해주세요. (Anthropic Console 결제/잔액 확인 필요)`
+      );
+    }
+    if (response.status >= 500) {
+      throw new Error(
+        `🛠 Claude 서버 오류 (${response.status})\n\n[원인]\nAnthropic 서버에 일시적 문제가 발생했습니다.\n\n[조치 방법]\n잠시 후 다시 시도해주세요.\n\n[기술 상세]\n${rawMessage}`
+      );
+    }
+    throw new Error(rawMessage || `Claude API 오류 (${response.status})`);
   }
   return response.json();
 }
@@ -225,7 +340,10 @@ export default function ClothingDesignGenerator() {
   const [items, setItems] = useState([]);
   const [historyItems, setHistoryItems] = useState([]);
   const [isDragging, setIsDragging] = useState(false);
+  const [brandGuide, setBrandGuide] = useState(() => loadBrandGuide());
+  const [guideUploadStatus, setGuideUploadStatus] = useState({ loading: false, error: null });
   const fileInputRef = useRef(null);
+  const guideFileInputRef = useRef(null);
 
   // History 화면 진입 시 목록 로드
   React.useEffect(() => {
@@ -234,21 +352,62 @@ export default function ClothingDesignGenerator() {
     }
   }, [view]);
 
+  const handleGuideFileUpload = async (file) => {
+    if (!file) return;
+    setGuideUploadStatus({ loading: true, error: null });
+    try {
+      const text = await extractTextFromFile(file);
+      if (!text || text.length < 30) {
+        throw new Error('파일에서 충분한 텍스트를 추출하지 못했습니다. 파일이 올바른지 확인해주세요.');
+      }
+      const saved = saveBrandGuide(file.name, text);
+      setBrandGuide(saved);
+      setGuideUploadStatus({ loading: false, error: null });
+    } catch (err) {
+      console.error('가이드 업로드 실패:', err);
+      setGuideUploadStatus({ loading: false, error: err.message || '파일 처리 중 오류가 발생했습니다.' });
+    }
+  };
+
+  const handleGuideReset = () => {
+    if (!confirm('업로드한 가이드를 제거하고 기본 Sergio Tacchini 가이드로 되돌리시겠습니까?')) return;
+    resetBrandGuide();
+    setBrandGuide(loadBrandGuide());
+  };
+
   const handleFiles = useCallback(async (files) => {
     const imageFiles = Array.from(files).filter(f => f.type.startsWith('image/'));
 
     const newItems = await Promise.all(imageFiles.map(async (file) => {
-      const base64 = await new Promise((resolve, reject) => {
+      // 원본 base64 읽기
+      const originalDataUrl = await new Promise((resolve, reject) => {
         const reader = new FileReader();
-        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.onload = () => resolve(reader.result);
         reader.onerror = reject;
         reader.readAsDataURL(file);
       });
-      const previewUrl = URL.createObjectURL(file);
+
+      // API 전송용 base64 - 큰 이미지면 자동 압축 (Vercel 4.5MB 한계 회피)
+      // base64는 원본의 약 1.33배 → 3MB(원본 약 2.25MB) 넘으면 압축
+      const SIZE_LIMIT_BYTES = 3 * 1024 * 1024;
+      let apiDataUrl = originalDataUrl;
+      let apiMediaType = file.type;
+
+      if (originalDataUrl.length > SIZE_LIMIT_BYTES) {
+        console.log(`[Upload] 이미지 ${(originalDataUrl.length / 1024 / 1024).toFixed(2)}MB → 압축 시작`);
+        // 의류 분석은 디테일 식별이 필요하니까 비교적 넉넉한 1500px / 500KB 목표
+        apiDataUrl = await compressImageDataUrl(originalDataUrl, 500, 1500);
+        apiMediaType = 'image/jpeg'; // 압축 후 JPEG
+        console.log(`[Upload] 압축 완료: ${(apiDataUrl.length / 1024).toFixed(1)}KB`);
+      }
+
+      const base64 = apiDataUrl.split(',')[1];
+      const previewUrl = URL.createObjectURL(file); // 화면 표시는 원본 유지
+
       return {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
         file, previewUrl, base64,
-        mediaType: file.type, name: file.name,
+        mediaType: apiMediaType, name: file.name,
         status: 'pending',
         step1: null, step2: null, step3: null,
         error: null, currentStep: 0,
@@ -302,22 +461,22 @@ export default function ClothingDesignGenerator() {
         max_tokens: 1500,
         messages: [{
           role: "user",
-          content: `다음은 Sergio Tacchini 브랜드 가이드입니다:
+          content: `다음은 적용해야 할 브랜드 가이드입니다:
 
-${BRAND_GUIDE}
+${brandGuide.content}
 
 다음은 분석된 의류 정보입니다:
 ${JSON.stringify(step1Json, null, 2)}
 
-이 의류를 Sergio Tacchini 브랜드 DNA에 맞게 재해석해주세요. 다음 JSON 형식으로만 응답하세요. 코드 블록(\`\`\`) 없이 JSON만 출력.
+이 의류를 위 브랜드 가이드의 DNA에 맞게 재해석해주세요. 다음 JSON 형식으로만 응답하세요. 코드 블록(\`\`\`) 없이 JSON만 출력.
 
 {
-  "recommendedLine": "Active 또는 Athleisure 또는 Classic 중 하나",
+  "recommendedLine": "브랜드 가이드에 정의된 라인/카테고리 중 가장 적합한 하나의 이름 (가이드에 라인 구분이 없으면 'Default'로 표기)",
   "lineReason": "이 라인을 선택한 이유 (1-2문장)",
   "redesign": {
     "style": "브랜드 적용 후 스타일",
-    "silhouette": "브랜드 적용 후 실루엣 (Slim Fit / Relaxed Comfort / Semi-Over Fit 명시)",
-    "material": "브랜드 적용 후 소재 (요철감 레벨 명시)",
+    "silhouette": "브랜드 적용 후 실루엣 (브랜드 가이드의 핏 명칭 그대로 사용)",
+    "material": "브랜드 적용 후 소재 (가이드의 소재 특성 반영)",
     "sewing": "브랜드 적용 후 봉재",
     "details": "브랜드 적용 후 디테일 (단추 사이즈, 카라 형태 등 구체적으로)",
     "color": "브랜드 적용 후 컬러"
@@ -355,10 +514,14 @@ ${JSON.stringify(step2Json.redesign, null, 2)}
 - 100% 새로운 디자인이 아닌, 원본을 브랜드 톤으로 재해석한 결과여야 합니다.
 - 프롬프트에 "preserving the original [구체적 요소] from the reference" 같은 문구를 명시적으로 포함시키세요.
 
-[가이드 2] 정면 앞/뒤 뷰 동시 생성
-- 의류의 **정면(front view)과 후면(back view)을 한 이미지 안에 나란히** 배치하도록 명시하세요.
-- 프롬프트에 "front view and back view side by side, both ghost mannequin shots" 같은 문구를 포함시키세요.
-- 두 뷰 모두 동일한 흰 배경, 동일한 조명 조건, 동일한 의류로 명확히 표현되어야 합니다.
+[가이드 2] 정면 앞/뒤 뷰 동시 생성 (측면 뷰 절대 금지)
+- 의류의 **정면(직각으로 정면을 향한 front view)과 후면(직각으로 뒤를 향한 back view)을 좌우 나란히** 배치.
+- 절대 금지: 측면 뷰(side view, profile view), 사선 뷰(3/4 angle, angled view, perspective view), 회전된 각도.
+- 두 뷰 모두 카메라를 정확히 정면으로 마주봐야 함 (front-facing only, perfectly straight-on, 0 degree angle, no rotation, no tilt).
+- 좌측에 정면(앞), 우측에 후면(뒤) 배치를 권장.
+- 두 뷰 모두 동일한 흰 배경, 동일한 조명, 동일한 크기.
+- 프롬프트에 다음 표현을 반드시 포함시키세요:
+  "two perfectly straight-on views side by side: front view (left) facing camera directly at 0 degrees, and back view (right) facing camera directly at 0 degrees, no side view, no profile angle, no 3/4 view, no perspective tilt, both views captured perpendicular to the camera"
 
 [가이드 3] 모든 로고 제거 (매우 중요)
 - 결과 이미지에는 어떤 브랜드 로고도 표시하지 마세요. (Sergio Tacchini 로고 포함)
@@ -390,9 +553,9 @@ ${JSON.stringify(step2Json.redesign, null, 2)}
 
 위 가이드 1~6을 모두 반영하여, 두 가지 모델용 영문 프롬프트를 만들어주세요. JSON으로만 응답. 코드 블록(\`\`\`) 없이.
 
-1) "nanoBanana": Nano Banana (Gemini 2.5 Flash Image)용. "Invisible ghost mannequin product shot on pure solid white background showing both front view and back view side by side of a [garment]..." 형식으로 시작. 자연어 풍부한 묘사. 100-140 단어. 반드시 명시: 완전한 순백 배경 (pure #FFFFFF white background), 마네킹/인체 없음, 앞뒤 뷰, 모든 로고/브랜드 표식 제거, 텍스트/주석 금지, 환경/바닥/그라데이션 없음.
+1) "nanoBanana": Nano Banana (Gemini 2.5 Flash Image)용. "Invisible ghost mannequin product shot on pure solid white background showing two perfectly straight-on views side by side of a [garment]: front view on the left (facing camera at 0 degrees) and back view on the right (facing camera at 0 degrees)..." 형식으로 시작. 자연어 풍부한 묘사. 100-140 단어. 반드시 명시: 완전한 순백 배경 (pure #FFFFFF), 마네킹/인체 없음, 좌측 정면 + 우측 후면 (둘 다 카메라를 직각으로 마주봄, no side view, no 3/4 angle, no perspective tilt), 모든 로고/브랜드 표식 제거, 텍스트/주석 금지, 환경/바닥 없음.
 
-2) "imagen3": Imagen 4용. 키워드 콤마 연결형. 60-80 단어. 핵심 키워드 (반드시 포함): "isolated on pure white background, #FFFFFF solid white backdrop, no environment, no floor, invisible ghost mannequin, no human body, floating garment, front and back view, no logos, no branding, unbranded plain fabric, no text, e-commerce product cutout".
+2) "imagen3": Imagen 4용. 키워드 콤마 연결형. 60-90 단어. 핵심 키워드 (반드시 포함): "two views side by side, front view left, back view right, both perfectly straight-on at 0 degrees facing camera, no side view, no profile, no 3/4 angle, no perspective, isolated on pure white background #FFFFFF, no environment, invisible ghost mannequin, no human body, no logos, no branding, no text, e-commerce product cutout".
 
 {
   "nanoBanana": "...",
@@ -563,6 +726,11 @@ ${JSON.stringify(step2Json.redesign, null, 2)}
             items={items}
             removeItem={removeItem}
             generateImage={generateImage}
+            brandGuide={brandGuide}
+            guideUploadStatus={guideUploadStatus}
+            guideFileInputRef={guideFileInputRef}
+            handleGuideFileUpload={handleGuideFileUpload}
+            handleGuideReset={handleGuideReset}
           />
         )}
         {view === 'history' && (
@@ -587,7 +755,7 @@ ${JSON.stringify(step2Json.redesign, null, 2)}
 }
 
 // ============= Main View (기존 업로드/처리 화면) =============
-function MainView({ isDragging, setIsDragging, handleDrop, handleFiles, fileInputRef, items, removeItem, generateImage }) {
+function MainView({ isDragging, setIsDragging, handleDrop, handleFiles, fileInputRef, items, removeItem, generateImage, brandGuide, guideUploadStatus, guideFileInputRef, handleGuideFileUpload, handleGuideReset }) {
   return (
     <>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, marginBottom: '2.5rem', flexWrap: 'wrap' }}>
@@ -622,9 +790,84 @@ function MainView({ isDragging, setIsDragging, handleDrop, handleFiles, fileInpu
         <button onClick={() => fileInputRef.current?.click()} style={{ padding: '10px 24px', background: '#1a1a1a', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 500, cursor: 'pointer', letterSpacing: 0.3 }}>파일 선택</button>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 16px', background: '#F5F3EC', borderRadius: 8, marginBottom: '2rem', fontSize: 12, color: '#666' }}>
-        <FileText size={14} />
-        <span>적용 중인 브랜드 가이드: <strong style={{ color: '#1a1a1a', fontWeight: 500 }}>Sergio Tacchini Brand DNA Guide</strong> · Active / Athleisure / Classic 라인</span>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '12px 16px', background: '#F5F3EC', borderRadius: 8, marginBottom: '0.5rem', fontSize: 12, color: '#666', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
+          <FileText size={14} style={{ flexShrink: 0 }} />
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            적용 중인 브랜드 가이드: <strong style={{ color: '#1a1a1a', fontWeight: 500 }}>{brandGuide.fileName}</strong>
+            {brandGuide.uploadedAt && (
+              <span style={{ color: '#999', marginLeft: 8 }}>
+                · 업로드 {new Date(brandGuide.uploadedAt).toLocaleString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+              </span>
+            )}
+          </span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+          <input
+            ref={guideFileInputRef}
+            type="file"
+            accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) handleGuideFileUpload(f);
+              e.target.value = ''; // 같은 파일 재선택 가능하도록 reset
+            }}
+          />
+          <button
+            onClick={() => guideFileInputRef.current?.click()}
+            disabled={guideUploadStatus.loading}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 5,
+              padding: '6px 12px',
+              background: '#fff',
+              border: '1px solid #D4D2C8',
+              borderRadius: 6,
+              fontSize: 11,
+              fontWeight: 500,
+              color: guideUploadStatus.loading ? '#999' : '#1a1a1a',
+              cursor: guideUploadStatus.loading ? 'wait' : 'pointer',
+            }}
+          >
+            {guideUploadStatus.loading ? (
+              <>
+                <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} />
+                추출 중...
+              </>
+            ) : (
+              <>
+                <Upload size={11} />
+                파일 선택
+              </>
+            )}
+          </button>
+          {!brandGuide.isDefault && (
+            <button
+              onClick={handleGuideReset}
+              title="기본 가이드로 되돌리기"
+              style={{
+                padding: '6px 8px',
+                background: '#fff',
+                border: '1px solid #D4D2C8',
+                borderRadius: 6,
+                fontSize: 11,
+                color: '#666',
+                cursor: 'pointer',
+                display: 'flex',
+              }}
+            >
+              <X size={12} />
+            </button>
+          )}
+        </div>
+      </div>
+      {guideUploadStatus.error && (
+        <div style={{ padding: '10px 14px', background: '#FCEBEB', color: '#791F1F', borderRadius: 6, fontSize: 12, marginBottom: '0.5rem' }}>
+          ⚠️ {guideUploadStatus.error}
+        </div>
+      )}
+      <div style={{ fontSize: 11, color: '#aaa', marginBottom: '2rem', paddingLeft: 4 }}>
+        PDF 또는 Word(.docx) 파일을 업로드하면 가이드가 즉시 교체됩니다. 가장 최근 업로드한 파일이 적용됩니다.
       </div>
 
       {items.length === 0 ? (
@@ -778,10 +1021,10 @@ function SmallLineBadge({ line }) {
     Athleisure: { bg: '#5DCAA5', color: '#04342C' },
     Classic: { bg: '#FAEEDA', color: '#854F0B' },
   };
-  const c = config[line] || config.Athleisure;
+  const c = config[line] || { bg: '#F0EFE8', color: '#1a1a1a' };
   return (
     <span style={{ display: 'inline-block', padding: '2px 8px', background: c.bg, color: c.color, borderRadius: 4, fontSize: 10, fontWeight: 500, letterSpacing: 0.5 }}>
-      {line.toUpperCase()}
+      {(line || 'DEFAULT').toUpperCase()}
     </span>
   );
 }
@@ -860,7 +1103,7 @@ function ItemCard({ item, onRemove, onGenerateImage, readOnly }) {
 
         <div style={{ padding: '1.5rem 1.75rem' }}>
           {item.status === 'error' && (
-            <div style={{ padding: 12, background: '#FCEBEB', color: '#791F1F', borderRadius: 8, fontSize: 13 }}>오류: {item.error}</div>
+            <div style={{ padding: '14px 16px', background: '#FCEBEB', color: '#791F1F', borderRadius: 8, fontSize: 12.5, border: '1px solid #F4C0BD', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{item.error}</div>
           )}
           {item.status === 'processing' && !item.step1 && <ProcessingState step={item.currentStep} />}
           {item.step1 && (
@@ -1047,11 +1290,20 @@ function LineBadge({ line }) {
     Athleisure: { bg: '#5DCAA5', color: '#04342C', label: 'ATHLEISURE', sub: 'Wellness' },
     Classic: { bg: '#FAEEDA', color: '#854F0B', label: 'CLASSIC', sub: 'Heritage' },
   };
-  const c = config[line] || config.Athleisure;
+  // 정의된 라인이면 풍성한 표시, 아니면 단순 텍스트 배지
+  const c = config[line];
+  if (c) {
+    return (
+      <div style={{ display: 'inline-block', padding: '8px 14px', background: c.bg, color: c.color, borderRadius: 8 }}>
+        <div style={{ fontSize: 13, fontWeight: 500, letterSpacing: 1.5 }}>{c.label}</div>
+        <div style={{ fontSize: 10, opacity: 0.8, letterSpacing: 0.5 }}>{c.sub}</div>
+      </div>
+    );
+  }
+  // Fallback: 임의 라인명도 깔끔하게
   return (
-    <div style={{ display: 'inline-block', padding: '8px 14px', background: c.bg, color: c.color, borderRadius: 8 }}>
-      <div style={{ fontSize: 13, fontWeight: 500, letterSpacing: 1.5 }}>{c.label}</div>
-      <div style={{ fontSize: 10, opacity: 0.8, letterSpacing: 0.5 }}>{c.sub}</div>
+    <div style={{ display: 'inline-block', padding: '8px 14px', background: '#F0EFE8', color: '#1a1a1a', borderRadius: 8, border: '1px solid #D4D2C8' }}>
+      <div style={{ fontSize: 13, fontWeight: 500, letterSpacing: 1.2 }}>{(line || 'DEFAULT').toUpperCase()}</div>
     </div>
   );
 }
@@ -1125,7 +1377,7 @@ function HarnessPromptingButton() {
           <div style={{ marginBottom: 10 }}>
             <div style={{ fontWeight: 500, marginBottom: 3, color: '#fff' }}>2. 정면 앞/뒤 뷰</div>
             <div style={{ color: '#ccc', fontSize: 11.5 }}>
-              한 이미지 안에 정면(front view)과 후면(back view)을 나란히 배치. 동일한 배경/조명 조건.
+              좌측 정면(front), 우측 후면(back) 나란히 배치. 측면/사선 뷰 절대 금지, 두 뷰 모두 카메라를 직각으로 마주봄.
             </div>
           </div>
           <div>
